@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .dsh/
+docs/
 *.log
 .DS_Store
 *.local

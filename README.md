@@ -1,26 +1,28 @@
 # MockForge
 
-> 浏览器内的 API Mock、流量监控与 AI 调试助手。
+[简体中文](README.zh-CN.md) | English
 
-MockForge 是一个基于 Manifest V3 的 Chrome 扩展。当前端等待后端接口、复现异常响应，或需要快速调整接口数据时，可以直接在浏览器中为页面的 `fetch` 和 `XMLHttpRequest` 请求配置本地 Mock 规则。
+> An in-browser API mocking, traffic-monitoring, and AI debugging assistant.
 
-## 功能
+MockForge is a Manifest V3 Chrome extension for creating local Mock responses for a page's `fetch` and `XMLHttpRequest` traffic. It is useful when frontend and backend work are not yet connected, when reproducing unusual responses, or when adjusting API data quickly.
 
-- 为 `fetch` / XHR 配置本地 Mock 响应，支持 URL 匹配、请求方法、Query、请求体、状态码、响应头、响应体和延迟。
-- 用文件夹整理规则；规则和所有父级文件夹均启用时才会生效。
-- 记录近期页面请求，并可一键从流量创建 Mock 规则。
-- 提供页面悬浮面板、Chrome Side Panel 与独立工作台三种入口。
-- 可连接 OpenAI Chat Completions 兼容的模型服务，用 AI 读取规则、分析流量、生成或修改 Mock 草稿。
-- 所有规则、对话与模型配置均保存在本机 Chrome 存储中。
+## Features
 
-## 快速开始
+- Configure local Mock responses for `fetch` and XHR, including URL matching, HTTP methods, query parameters, request bodies, status codes, headers, response bodies, and delays.
+- Organize rules in folders. A rule takes effect only when it and all of its parent folders are enabled.
+- Monitor recent page traffic and create a Mock rule directly from a captured request.
+- Work from a floating page panel, Chrome Side Panel, or standalone workspace.
+- Connect an OpenAI Chat Completions-compatible model service to inspect rules, analyze traffic, and create or update Mock drafts with AI.
+- Keep rules, conversations, and model configuration in local Chrome storage.
 
-### 环境要求
+## Getting started
 
-- Node.js 24（通过 nvm 管理）
-- Chrome 浏览器
+### Prerequisites
 
-### 安装依赖并构建
+- Node.js 24, managed with nvm
+- Google Chrome
+
+### Install and build
 
 ```powershell
 nvm use 24.14.1
@@ -28,70 +30,64 @@ npm ci
 npm run build
 ```
 
-构建产物位于 `dist/`。
+The production extension is emitted to `dist/`.
 
-### 在 Chrome 中加载
+### Load the extension in Chrome
 
-1. 打开 `chrome://extensions`。
-2. 开启右上角的“开发者模式”。
-3. 点击“加载已解压的扩展程序”。
-4. 选择本项目的 `dist/` 目录。
+1. Open `chrome://extensions`.
+2. Enable **Developer mode**.
+3. Select **Load unpacked**.
+4. Choose this project's `dist/` directory.
 
-开发时可运行下面的命令监听源文件变更；首次运行后，同样加载生成的 `dist/` 目录：
+For development, run the following command and load the generated `dist/` directory after the first build:
 
 ```powershell
 nvm use 24.14.1
 npm run dev
 ```
 
-## 使用说明
+## Usage
 
-1. 打开扩展工作台，在“Mock 规则”中创建规则或从“流量监听”中快速创建。
-2. 设置请求 URL、匹配方式、请求方法与响应数据，并启用规则。
-3. 刷新或操作目标页面，符合规则的 `fetch` / XHR 请求将返回本地 Mock 响应。
-4. 如需使用 AI 助手，在“设置”中配置模型地址、模型名与 API Key。模型服务需要兼容 OpenAI 的 `tools` / Function Calling。
+1. Open the extension workspace. Create a rule in **Mock Rules**, or create one from **Traffic Monitoring**.
+2. Set the request URL, match mode, HTTP method, and response data, then enable the rule.
+3. Reload or interact with the target page. Matching `fetch` and XHR calls receive the local Mock response.
+4. To use the AI assistant, configure a model endpoint, model name, and API key under **Settings**. The model service must support OpenAI-compatible `tools` / Function Calling.
 
-## 规则匹配
+## URL match modes
 
-支持以下 URL 匹配模式：
+- `exact`: matches the full URL.
+- `prefix`: matches a URL prefix.
+- `wildcard`: matches using wildcards.
+- `regex`: matches with a regular expression.
 
-- `exact`：完整 URL 一致。
-- `prefix`：URL 以前缀匹配。
-- `wildcard`：使用通配符匹配。
-- `regex`：使用正则表达式匹配。
+If several rules match, MockForge chooses one based on URL specificity, rule priority, and last update time.
 
-当多条规则均匹配时，插件会综合 URL 精确度、规则优先级和更新时间选择最终规则。
+## Scope and privacy
 
-## 边界与隐私
+- By default, MockForge handles only `fetch` and `XMLHttpRequest` calls from the page's main world. WebSocket, navigations, and static resources are not intercepted by default.
+- Rules, model configuration, and conversations stay in local browser storage. This project does not provide server-side synchronization.
+- The AI assistant sends the current conversation, explicitly referenced rules or folders, and required tool results to the model service you configure. Please review that provider's data-handling policy.
 
-- 默认仅 Mock 页面主环境中的 `fetch` 与 `XMLHttpRequest`；WebSocket、页面导航及静态资源不在默认拦截范围内。
-- 规则、模型配置和对话记录仅保存在本机；项目不提供服务端同步。
-- AI 功能会把当前对话、用户显式引用的规则或文件夹，以及必要的工具结果发送给你配置的模型服务。请自行确认模型服务的数据处理政策。
-
-## 常用命令
+## Commands
 
 ```powershell
-# 类型检查
+# Type check
 npm run typecheck
 
-# 生产构建
+# Production build
 npm run build
 
-# 开发模式
+# Development mode
 npm run dev
 ```
 
-## 技术栈
+## Tech stack
 
 - React 19 + TypeScript
 - Vite + CRXJS
 - Chrome Extension Manifest V3
 - IndexedDB / Chrome Storage
 
-## 开发说明
-
-产品设计与功能边界见 [docs/mock-extension-design.md](docs/mock-extension-design.md)。
-
 ## License
 
-暂未指定。发布前请补充适合项目的许可证。
+No license has been selected yet. Add one before publishing.
