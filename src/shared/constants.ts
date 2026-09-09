@@ -1,0 +1,5 @@
+export const WORKSPACE_PATH = 'src/workspace/index.html'
+export const SIDE_PANEL_PATH = 'src/side-panel/index.html'
+export const PAGE_REQUEST_EVENT = 'api-mook:request'
+export const PAGE_RESPONSE_EVENT = 'api-mook:response'
+export const PAGE_TRAFFIC_RESPONSE_EVENT = 'api-mook:traffic-response'
