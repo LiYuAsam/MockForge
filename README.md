@@ -90,4 +90,4 @@ npm run dev
 
 ## License
 
-No license has been selected yet. Add one before publishing.
+This project is licensed under the [MIT License](LICENSE).
