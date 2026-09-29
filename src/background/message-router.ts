@@ -50,6 +50,32 @@ async function handleMessage(message: RuntimeMessage, tabId?: number): Promise<R
     await saveTrafficResponse(message.payload.id, message.payload.response, message.payload.status)
     return { ok: true }
   }
+  if (message.type === 'GET_CHAT_CONVERSATIONS') {
+    return { ok: true, conversations: await appRepository.listChatConversations() }
+  }
+  if (message.type === 'IMPORT_CHAT_CONVERSATIONS') {
+    await appRepository.importChatConversations(
+      message.payload.conversations,
+      message.payload.source,
+    )
+    return { ok: true }
+  }
+  if (message.type === 'SAVE_CHAT_CONVERSATION') {
+    const expiredConversationIds = await appRepository.saveChatConversation(
+      message.payload.conversation,
+      message.payload.historyLimit,
+      message.payload.source,
+    )
+    return { ok: true, expiredConversationIds }
+  }
+  if (message.type === 'DELETE_CHAT_CONVERSATION') {
+    await appRepository.deleteChatConversation(message.payload.id, message.payload.source)
+    return { ok: true }
+  }
+  if (message.type === 'SAVE_CHAT_CONFIG') {
+    await appRepository.saveChatConfig(message.payload)
+    return { ok: true }
+  }
   if (message.type === 'CLEAR_TRAFFIC') {
     await appRepository.clearTraffic()
     return { ok: true }

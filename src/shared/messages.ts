@@ -1,4 +1,4 @@
-import type { Folder, MockRule, TrafficEntry, TrafficResponse } from '../core/models'
+import type { ChatConfig, ChatConversation, Folder, MockRule, TrafficEntry, TrafficResponse } from '../core/models'
 
 export type WorkspaceSnapshot = { folders: Folder[]; rules: MockRule[] }
 
@@ -37,6 +37,11 @@ export type RuntimeMessage =
   | { type: 'DELETE_RULE'; payload: { id: string } }
   | { type: 'IMPORT_WORKSPACE'; payload: WorkspaceSnapshot }
   | { type: 'SAVE_TRAFFIC_RESPONSE'; payload: { id: string; response: TrafficResponse; status?: number } }
+  | { type: 'GET_CHAT_CONVERSATIONS' }
+  | { type: 'IMPORT_CHAT_CONVERSATIONS'; payload: { conversations: ChatConversation[]; source: string } }
+  | { type: 'SAVE_CHAT_CONVERSATION'; payload: { conversation: ChatConversation; historyLimit: number; source: string } }
+  | { type: 'DELETE_CHAT_CONVERSATION'; payload: { id: string; source: string } }
+  | { type: 'SAVE_CHAT_CONFIG'; payload: ChatConfig }
   | { type: 'GET_TRAFFIC'; tabId?: number }
   | { type: 'GET_PAGE_CONTEXT' }
   | { type: 'CLEAR_TRAFFIC'; tabId?: number }
@@ -47,6 +52,8 @@ export type RuntimeResponse =
   | { ok: true; decision: MockDecision }
   | { ok: true; workspace: WorkspaceSnapshot }
   | { ok: true; traffic: TrafficEntry[] }
+  | { ok: true; conversations: ChatConversation[] }
+  | { ok: true; expiredConversationIds: string[] }
   | { ok: true; page?: PageContext }
   | { ok: true }
   | { ok: false; error: string }

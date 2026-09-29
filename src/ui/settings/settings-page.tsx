@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ChatConfig, InterfaceConfig, ModelConfig } from '../../core/models'
 import { appRepository } from '../../core/storage/app-repository'
+import { saveChatConfig as saveSharedChatConfig } from '../chat/chat-storage-client'
 
 const EMPTY_MODEL_CONFIG: ModelConfig = { baseUrl: '', apiKey: '', model: '', extraHeaders: {} }
 const DEFAULT_CHAT_CONFIG: ChatConfig = { historyLimit: 10, enablePdfParsing: false, enableDocxParsing: false, pdfProcessing: 'hybrid', pdfTextThreshold: 30, pdfMaxVisualPages: 10 }
@@ -36,7 +37,10 @@ export function SettingsPage() {
     await appRepository.saveModelConfig(draftConfig)
     setConfig(draftConfig); setDraftConfig(EMPTY_MODEL_CONFIG); setEditingModel(!hasModelConfig(draftConfig)); setModelSaved('已保存')
   }
-  async function saveChat(): Promise<void> { await appRepository.saveChatConfig(chatConfig); setChatSaved('已保存') }
+  async function saveChat(): Promise<void> {
+    await saveSharedChatConfig(chatConfig)
+    setChatSaved('已保存')
+  }
   async function saveInterface(): Promise<void> { await appRepository.saveInterfaceConfig(interfaceConfig); setInterfaceSaved('已保存，已打开的网页会立即同步。') }
 
   return <section className="settings">

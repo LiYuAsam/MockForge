@@ -34,6 +34,28 @@ export const appRepository = {
   deleteRule: (id: string) => deleteRules([id]),
   clearTraffic: () => clear(STORES.traffic),
   listChatConversations: () => getAll<ChatConversation>(STORES.chats),
+  async importChatConversations(conversations: ChatConversation[], source: string): Promise<void> {
+    const [stored, config] = await Promise.all([
+      getAll<ChatConversation>(STORES.chats),
+      this.getChatConfig(),
+    ])
+    const byId = new Map(stored.map((conversation) => [conversation.id, conversation]))
+    const imported: ChatConversation[] = []
+
+    conversations.forEach((conversation) => {
+      const current = byId.get(conversation.id)
+      if (!current || conversation.updatedAt > current.updatedAt) {
+        byId.set(conversation.id, conversation)
+        imported.push(conversation)
+      }
+    })
+
+    const sorted = [...byId.values()].sort((left, right) => right.updatedAt - left.updatedAt)
+    const expired = sorted.slice(normalizeHistoryLimit(config.historyLimit))
+    await Promise.all(imported.map((conversation) => put(STORES.chats, conversation)))
+    await Promise.all(expired.map((conversation) => remove(STORES.chats, conversation.id)))
+    if (imported.length || expired.length) await notifyChatHistoryChanged(source)
+  },
   async saveChatConversation(conversation: ChatConversation, historyLimit: number, source: string): Promise<string[]> {
     await put(STORES.chats, conversation)
     const conversations = await getAll<ChatConversation>(STORES.chats)
