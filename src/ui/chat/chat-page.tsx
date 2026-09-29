@@ -350,7 +350,7 @@ function normalizeDrafts(value: unknown): RuleChangeDraft[] {
 function findReferences(text: string, rules: MockRule[], folders: Folder[]) {
   return [...rules.map((rule) => ({ type: 'rule' as const, id: rule.id, label: rule.name })), ...folders.map((folder) => ({ type: 'folder' as const, id: folder.id, label: folder.name }))].filter((item) => text.includes(`@${item.label}`))
 }
-
+ 
 function getConversationTitle(messages: ChatMessage[]): string {
   const firstUserMessage = messages.find((message) => message.role === 'user')?.content.replace(/\s+/g, ' ').trim()
   if (!firstUserMessage) return '新对话'
