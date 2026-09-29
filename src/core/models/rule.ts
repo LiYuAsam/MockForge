@@ -1,5 +1,18 @@
 export type UrlMode = 'exact' | 'prefix' | 'wildcard' | 'regex'
 export type BodyType = 'json' | 'text' | 'empty'
+export type MockBodyType = BodyType | 'file'
+
+export type FileAssetReference = {
+  id: string
+  name: string
+  mimeType: string
+  size: number
+}
+
+export type FileAsset = FileAssetReference & {
+  blob: Blob
+  createdAt: number
+}
 
 export type RequestMatch = {
   url: string
@@ -22,9 +35,10 @@ export type MockRule = {
     status: number
     headersEnabled?: boolean
     headers: Record<string, string>
-    bodyType: BodyType
+    bodyType: MockBodyType
     body: unknown
     delayMs: number
+    file?: FileAssetReference
   }
   metadata: {
     createdAt: number

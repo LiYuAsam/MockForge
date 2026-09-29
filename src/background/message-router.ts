@@ -41,7 +41,7 @@ async function handleMessage(message: RuntimeMessage, tabId?: number): Promise<R
     return { ok: true }
   }
   if (message.type === 'IMPORT_WORKSPACE') {
-    await Promise.all([...message.payload.folders.map((folder) => appRepository.saveFolder(folder)), ...message.payload.rules.map((rule) => appRepository.saveRule(rule))])
+    await appRepository.saveWorkspace(message.payload.folders, message.payload.rules)
     return { ok: true }
   }
   if (message.type === 'GET_TRAFFIC') return { ok: true, traffic: await appRepository.listTraffic() }

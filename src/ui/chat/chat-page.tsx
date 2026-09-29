@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatConfig, ChatConversation, ChatMessage, Folder, MockRule, RuleChangeDraft } from '../../core/models'
-import { appRepository } from '../../core/storage/app-repository'
+import { appRepository, CHAT_HISTORY_SYNC_KEY } from '../../core/storage/app-repository'
 import { createId } from '../../shared/ids'
 import type { RuntimeMessage, RuntimeResponse } from '../../shared/messages'
 import { IconButton } from '../components/icon-button'
@@ -37,11 +37,15 @@ export function ChatPage({ rules, folders, onSaveRule, onDeleteRule }: { rules: 
   const messagesEnd = useRef<HTMLDivElement>(null)
   const historyRoot = useRef<HTMLElement>(null)
   const currentSnapshot = useRef<ChatConversation | undefined>(undefined)
+  const conversationsRef = useRef(conversations)
+  const [historySyncSource] = useState(() => createId('chat-context'))
+  const skipHistoryPersist = useRef(false)
   const saveTimer = useRef<number | undefined>(undefined)
   const deletedConversationIds = useRef(new Set<string>())
   const runtimeAttachmentsByMessage = useRef(new Map<string, RuntimeAttachment[]>())
   const query = getMentionQuery(text, cursor)
   const options = useMemo(() => query === undefined ? [] : searchMentions(query, rules, folders), [query, rules, folders])
+  conversationsRef.current = conversations
 
   useEffect(() => {
     let cancelled = false
@@ -59,8 +63,31 @@ export function ChatPage({ rules, folders, onSaveRule, onDeleteRule }: { rules: 
   }, [])
 
   useEffect(() => {
-    const reloadAfterConfigChange = (changes: { chatConfig?: chrome.storage.StorageChange }, areaName: string) => {
-      if (areaName !== 'local' || !changes.chatConfig) return
+    const reloadAfterStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
+      if (areaName !== 'local') return
+      const historyChange = changes[CHAT_HISTORY_SYNC_KEY]
+      const historyValue = historyChange?.newValue as { source?: unknown } | undefined
+      if (historyChange && historyValue?.source !== historySyncSource) {
+        void appRepository.listChatConversations().then((items) => {
+          const sorted = sortConversations(items)
+          setConversations(sorted)
+          if (!activeConversationId) return
+          const active = sorted.find((item) => item.id === activeConversationId)
+          if (!active) {
+            if (saveTimer.current) window.clearTimeout(saveTimer.current)
+            currentSnapshot.current = undefined
+            skipHistoryPersist.current = true
+            setActiveConversationId(undefined); setActiveTitle(''); setMessages([]); setDrafts([]); setText('')
+            return
+          }
+          if (sending || active.updatedAt <= (currentSnapshot.current?.updatedAt ?? 0)) return
+          if (saveTimer.current) window.clearTimeout(saveTimer.current)
+          currentSnapshot.current = active
+          skipHistoryPersist.current = true
+          setActiveTitle(active.title); setMessages(active.messages); setDrafts(normalizeDrafts(active.drafts)); setToolActivities([])
+        })
+      }
+      if (!changes.chatConfig) return
       void Promise.all([appRepository.listChatConversations(), appRepository.getChatConfig()]).then(([items, config]) => {
         const sorted = sortConversations(items)
         setConversations(sorted); setHistoryLimit(config.historyLimit); setChatConfig(config)
@@ -70,9 +97,9 @@ export function ChatPage({ rules, folders, onSaveRule, onDeleteRule }: { rules: 
         }
       })
     }
-    chrome.storage.onChanged.addListener(reloadAfterConfigChange)
-    return () => chrome.storage.onChanged.removeListener(reloadAfterConfigChange)
-  }, [activeConversationId])
+    chrome.storage.onChanged.addListener(reloadAfterStorageChange)
+    return () => chrome.storage.onChanged.removeListener(reloadAfterStorageChange)
+  }, [activeConversationId, sending])
 
   useEffect(() => {
     messagesEnd.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
@@ -97,11 +124,15 @@ export function ChatPage({ rules, folders, onSaveRule, onDeleteRule }: { rules: 
   }, [imagePreview])
 
   useEffect(() => {
+    if (skipHistoryPersist.current) {
+      skipHistoryPersist.current = false
+      return
+    }
     if (!historyReady || !activeConversationId) {
       currentSnapshot.current = undefined
       return
     }
-    const existing = conversations.find((item) => item.id === activeConversationId)
+    const existing = conversationsRef.current.find((item) => item.id === activeConversationId)
     const snapshot: ChatConversation = {
       id: activeConversationId,
       title: activeTitle || getConversationTitle(messages),
@@ -114,17 +145,17 @@ export function ChatPage({ rules, folders, onSaveRule, onDeleteRule }: { rules: 
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(() => { void persistConversation(snapshot) }, 400)
     return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current) }
-  }, [historyReady, activeConversationId, activeTitle, conversations, drafts, historyLimit, messages])
+  }, [historyReady, activeConversationId, activeTitle, drafts, historyLimit, messages])
 
   useEffect(() => () => {
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     const snapshot = currentSnapshot.current
-    if (snapshot && !deletedConversationIds.current.has(snapshot.id)) void appRepository.saveChatConversation(snapshot, historyLimit)
+    if (snapshot && !deletedConversationIds.current.has(snapshot.id)) void appRepository.saveChatConversation(snapshot, historyLimit, historySyncSource)
   }, [historyLimit])
 
   async function persistConversation(conversation: ChatConversation): Promise<void> {
     if (deletedConversationIds.current.has(conversation.id)) return
-    const expired = await appRepository.saveChatConversation(conversation, historyLimit)
+    const expired = await appRepository.saveChatConversation(conversation, historyLimit, historySyncSource)
     if (expired.length) setConversations((items) => items.filter((item) => !expired.includes(item.id)))
   }
 
@@ -231,7 +262,7 @@ export function ChatPage({ rules, folders, onSaveRule, onDeleteRule }: { rules: 
     deletedConversationIds.current.add(conversation.id)
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     setConfirmDeleteId(undefined)
-    await appRepository.deleteChatConversation(conversation.id)
+    await appRepository.deleteChatConversation(conversation.id, historySyncSource)
     setConversations((items) => items.filter((item) => item.id !== conversation.id))
     if (conversation.id === activeConversationId) {
       currentSnapshot.current = undefined

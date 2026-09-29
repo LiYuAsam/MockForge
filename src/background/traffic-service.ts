@@ -2,6 +2,7 @@ import type { PageRequest } from '../shared/messages'
 import { appRepository } from '../core/storage/app-repository'
 import type { MockDecision } from '../shared/messages'
 import type { TrafficResponse } from '../core/models'
+import { fileContentDisposition } from '../shared/file-response'
 
 export async function recordTraffic(
   request: PageRequest,
@@ -33,6 +34,14 @@ function toTrafficResponse(response: MockDecision['response']): TrafficResponse 
   if (!response) return undefined
   const headers = response.headersEnabled ? { ...response.headers } : {}
   if (response.bodyType === 'json' && !hasHeader(headers, 'content-type')) headers['content-type'] = 'application/json'
+  if (response.bodyType === 'file') {
+    const file = response.file
+    if (file && !hasHeader(headers, 'content-type')) headers['content-type'] = file.mimeType
+    if (file && !hasHeader(headers, 'content-disposition')) {
+      headers['content-disposition'] = fileContentDisposition(file.name)
+    }
+    return { bodyType: 'file', body: null, ...(file ? { file } : {}), headers }
+  }
   return { bodyType: response.bodyType, body: response.body, headers }
 }
 

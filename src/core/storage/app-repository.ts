@@ -1,19 +1,25 @@
-import type { ChatConfig, ChatConversation, Folder, InterfaceConfig, MockRule, ModelConfig, TrafficEntry } from '../models'
+import type { ChatConfig, ChatConversation, FileAsset, Folder, InterfaceConfig, MockRule, ModelConfig, TrafficEntry } from '../models'
 import { createId } from '../../shared/ids'
 import { STORES } from './database'
 import { clear, getAll, getById, put, remove } from './repository'
+import { deleteRules, saveRule, saveRuleWithFile, saveWorkspace } from './rule-persistence'
 
 const MODEL_CONFIG_KEY = 'modelConfig'
 const CHAT_CONFIG_KEY = 'chatConfig'
 const INTERFACE_CONFIG_KEY = 'interfaceConfig'
+export const CHAT_HISTORY_SYNC_KEY = 'chatHistorySync'
 const DEFAULT_CHAT_CONFIG: ChatConfig = { historyLimit: 10, enablePdfParsing: false, enableDocxParsing: false, pdfProcessing: 'hybrid', pdfTextThreshold: 30, pdfMaxVisualPages: 10 }
 
 export const appRepository = {
   listFolders: () => getAll<Folder>(STORES.folders),
   listRules: () => getAll<MockRule>(STORES.rules),
+  listFileAssets: () => getAll<FileAsset>(STORES.fileAssets),
+  getFileAsset: (id: string) => getById<FileAsset>(STORES.fileAssets, id),
   listTraffic: () => getAll<TrafficEntry>(STORES.traffic),
   saveFolder: (folder: Folder) => put(STORES.folders, folder),
-  saveRule: (rule: MockRule) => put(STORES.rules, rule),
+  saveRule,
+  saveRuleWithFile,
+  saveWorkspace,
   async saveTraffic(entry: TrafficEntry): Promise<void> {
     await put(STORES.traffic, entry)
     const traffic = await getAll<TrafficEntry>(STORES.traffic)
@@ -25,17 +31,21 @@ export const appRepository = {
     if (traffic) await put(STORES.traffic, { ...traffic, response, ...(status === undefined ? {} : { status }) })
   },
   deleteFolder: (id: string) => remove(STORES.folders, id),
-  deleteRule: (id: string) => remove(STORES.rules, id),
+  deleteRule: (id: string) => deleteRules([id]),
   clearTraffic: () => clear(STORES.traffic),
   listChatConversations: () => getAll<ChatConversation>(STORES.chats),
-  async saveChatConversation(conversation: ChatConversation, historyLimit: number): Promise<string[]> {
+  async saveChatConversation(conversation: ChatConversation, historyLimit: number, source: string): Promise<string[]> {
     await put(STORES.chats, conversation)
     const conversations = await getAll<ChatConversation>(STORES.chats)
     const expired = conversations.sort((left, right) => right.updatedAt - left.updatedAt).slice(normalizeHistoryLimit(historyLimit))
     await Promise.all(expired.map((item) => remove(STORES.chats, item.id)))
+    await notifyChatHistoryChanged(source)
     return expired.map((item) => item.id)
   },
-  deleteChatConversation: (id: string) => remove(STORES.chats, id),
+  async deleteChatConversation(id: string, source: string): Promise<void> {
+    await remove(STORES.chats, id)
+    await notifyChatHistoryChanged(source)
+  },
   async getModelConfig(): Promise<ModelConfig> {
     const result = await chrome.storage.local.get(MODEL_CONFIG_KEY)
     return result[MODEL_CONFIG_KEY] ?? { baseUrl: '', apiKey: '', model: '', extraHeaders: {} }
@@ -66,11 +76,14 @@ export const appRepository = {
     const [folders, rules] = await Promise.all([getAll<Folder>(STORES.folders), getAll<MockRule>(STORES.rules)])
     if (!folders.some((folder) => folder.id === id)) return
     const folderIds = collectFolderIds(id, folders)
-    await Promise.all([
-      ...rules.filter((rule) => rule.folderId && folderIds.has(rule.folderId)).map((rule) => remove(STORES.rules, rule.id)),
-      ...[...folderIds].map((folderId) => remove(STORES.folders, folderId)),
-    ])
+    const removedRules = rules.filter((rule) => rule.folderId && folderIds.has(rule.folderId))
+    await deleteRules(removedRules.map((rule) => rule.id))
+    await Promise.all([...folderIds].map((folderId) => remove(STORES.folders, folderId)))
   },
+}
+
+async function notifyChatHistoryChanged(source: string): Promise<void> {
+  await chrome.storage.local.set({ [CHAT_HISTORY_SYNC_KEY]: { source, revision: createId('chat-sync') } })
 }
 
 function normalizeHistoryLimit(value: number): number {

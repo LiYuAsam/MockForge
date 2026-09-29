@@ -13,11 +13,18 @@ export type PageRequest = {
   source: 'fetch' | 'xhr'
 }
 
+export type ResolvedMockFile = {
+  name: string
+  mimeType: string
+  base64: string
+}
+
 export type MockDecision = {
   matched: boolean
   ruleId?: string
+  ruleName?: string
   requestHeaders?: Record<string, string>
-  response?: MockRule['response']
+  response?: MockRule['response'] & { resolvedFile?: ResolvedMockFile }
 }
 
 export type RuntimeMessage =

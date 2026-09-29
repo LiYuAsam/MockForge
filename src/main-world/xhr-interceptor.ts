@@ -1,6 +1,9 @@
 import { createId } from '../shared/ids'
+import { decodeBytes } from '../shared/base64'
+import { fileContentDisposition } from '../shared/file-response'
 import type { MockDecision, PageRequest } from '../shared/messages'
 import { requestDecision } from './bridge'
+import { logMockedRequest } from './mock-console'
 import { captureXhrJsonResponse, captureXhrTextResponse } from './response-capture'
 
 type XhrEventName = 'readystatechange' | 'load' | 'loadend' | 'error' | 'abort' | 'timeout'
@@ -77,6 +80,7 @@ function createXhrConstructor(NativeXHR: typeof XMLHttpRequest) {
         this.native.send(body)
         return
       }
+      logMockedRequest(request, decision)
       this.mocked = decision
       this.mockReadyState = 1
       this.emit('readystatechange')
@@ -130,12 +134,45 @@ function createXhrConstructor(NativeXHR: typeof XMLHttpRequest) {
 
 function mockText(decision: MockDecision): string {
   const response = decision.response!
+  if (response.bodyType === 'file' && response.resolvedFile) {
+    return decodeFileText(decodeBytes(response.resolvedFile.base64), response.resolvedFile.mimeType)
+  }
   return response.bodyType === 'json' ? JSON.stringify(response.body) : String(response.body ?? '')
 }
 
 function mockResponse(decision: MockDecision, responseType: XMLHttpRequestResponseType): unknown {
+  const response = decision.response!
+  if (response.bodyType === 'file' && response.resolvedFile) {
+    const { base64, mimeType } = response.resolvedFile
+    const bytes = decodeBytes(base64)
+    if (responseType === 'blob') return new Blob([bytes.buffer as ArrayBuffer], { type: mimeType })
+    if (responseType === 'arraybuffer') return bytes.buffer
+
+    const text = decodeFileText(bytes, mimeType)
+    if (responseType === 'json') {
+      try { return JSON.parse(text) } catch { return null }
+    }
+    if (responseType === 'document') {
+      const type = mimeType.split(';', 1)[0]
+      const documentType = ['text/html', 'text/xml', 'application/xml', 'application/xhtml+xml', 'image/svg+xml'].includes(type)
+        ? type as DOMParserSupportedType
+        : 'text/html'
+      return new DOMParser().parseFromString(text, documentType)
+    }
+    return text
+  }
   if (responseType === 'json' && decision.response?.bodyType === 'json') return decision.response.body
   return mockText(decision)
+}
+
+function decodeFileText(bytes: Uint8Array, mimeType: string): string {
+  const charset = /charset\s*=\s*["']?([^;"'\s]+)/i.exec(mimeType)?.[1]
+
+  try {
+    return new TextDecoder(charset).decode(bytes)
+  } catch {
+    return new TextDecoder().decode(bytes)
+  }
 }
 
 function applyHeaders(xhr: XMLHttpRequest, headers?: Record<string, string>): void {
@@ -151,6 +188,12 @@ function mockHeaders(decision: MockDecision): Record<string, string> {
   const response = decision.response!
   const headers = response.headersEnabled ? { ...response.headers } : {}
   if (response.bodyType === 'json' && !findHeader(headers, 'content-type')) headers['content-type'] = 'application/json'
+  if (response.bodyType === 'file' && response.resolvedFile && !findHeader(headers, 'content-type')) {
+    headers['content-type'] = response.resolvedFile.mimeType
+  }
+  if (response.bodyType === 'file' && response.resolvedFile && !findHeader(headers, 'content-disposition')) {
+    headers['content-disposition'] = fileContentDisposition(response.resolvedFile.name)
+  }
   return headers
 }
 

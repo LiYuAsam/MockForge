@@ -1,9 +1,10 @@
 const DATABASE_NAME = 'api-mook'
-const DATABASE_VERSION = 1
+const DATABASE_VERSION = 2
 
 export const STORES = {
   folders: 'folders',
   rules: 'rules',
+  fileAssets: 'fileAssets',
   traffic: 'traffic',
   chats: 'chats',
 } as const

@@ -81,7 +81,16 @@ export function RulesPage({ data, selectedId, onSelectedIdChange }: { data: Work
       <aside className="rule-editor-sidebar">
         <RuleList rules={sortRules(data.rules, 'enabled')} conflicts={data.conflicts} selectedId={selected.id} onSelect={onSelectedIdChange} onDelete={deleteRule} onCreate={createRule} onToggleEnabled={toggleRule} />
       </aside>
-      <section className="rules-detail"><RuleEditor rule={selected} folders={data.folders} conflicts={conflictsFor(selected.id, data.conflicts)} onSave={data.saveRule} /></section>
+      <section className="rules-detail">
+        <RuleEditor
+          rule={selected}
+          folders={data.folders}
+          conflicts={conflictsFor(selected.id, data.conflicts)}
+          onSave={data.saveRule}
+          onSaveFile={data.saveRuleWithFile}
+          onToggleEnabled={(enabled) => toggleRule(selected, enabled)}
+        />
+      </section>
     </div>
   </section>
 

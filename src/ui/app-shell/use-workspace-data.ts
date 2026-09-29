@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Folder, MockRule, TrafficEntry } from '../../core/models'
-import { appRepository as legacyWorkspaceRepository } from '../../core/storage/app-repository'
+import type { FileAsset, FileAssetReference, Folder, MockRule, TrafficEntry } from '../../core/models'
+import { appRepository } from '../../core/storage/app-repository'
 import { findConflicts } from '../../core/rules/conflicts'
 import { createId } from '../../shared/ids'
 import type { RuntimeMessage, RuntimeResponse, WorkspaceSnapshot } from '../../shared/messages'
+import { MAX_MOCK_FILE_SIZE_BYTES } from '../../shared/file-limits'
 
 const LEGACY_MIGRATION_STORAGE_KEY = 'legacyWorkspaceMigrated'
 
@@ -19,7 +20,7 @@ export function useWorkspaceData() {
       const migration = await chrome.storage.local.get(LEGACY_MIGRATION_STORAGE_KEY)
       if (!migration[LEGACY_MIGRATION_STORAGE_KEY]) {
         if (!workspace.folders.length && !workspace.rules.length) {
-          const [legacyFolders, legacyRules] = await Promise.all([legacyWorkspaceRepository.listFolders(), legacyWorkspaceRepository.listRules()])
+          const [legacyFolders, legacyRules] = await Promise.all([appRepository.listFolders(), appRepository.listRules()])
           if (legacyFolders.length || legacyRules.length) {
             await sendWorkspaceMessage({ type: 'IMPORT_WORKSPACE', payload: { folders: legacyFolders, rules: legacyRules } })
             workspace = { folders: legacyFolders, rules: legacyRules }
@@ -53,11 +54,35 @@ export function useWorkspaceData() {
     await refresh()
   }, [refresh])
 
+  const saveRuleWithFile = useCallback(async (rule: MockRule, file: File): Promise<MockRule> => {
+    if (file.size > MAX_MOCK_FILE_SIZE_BYTES) {
+      throw new Error('响应文件不能超过 20 MB。')
+    }
+
+    const now = Date.now()
+    const reference: FileAssetReference = {
+      id: createId('asset'),
+      name: file.name || 'mock-response.bin',
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size,
+    }
+    const asset: FileAsset = { ...reference, blob: file, createdAt: now }
+    const savedRule: MockRule = {
+      ...rule,
+      response: { ...rule.response, bodyType: 'file', body: null, file: reference },
+      metadata: { ...rule.metadata, updatedAt: now },
+    }
+
+    await appRepository.saveRuleWithFile(savedRule, asset)
+    await refresh()
+    return savedRule
+  }, [refresh])
+
   const createRule = useCallback(async (folderId: string | null = null) => {
     const now = Date.now()
     const rule: MockRule = {
       id: createId('rule'), name: '未命名接口', folderId, enabled: true, priority: 0,
-      match: { url: '', urlMode: 'exact', methods: ['GET'] },
+      match: { url: '', urlMode: 'prefix', methods: ['GET'] },
       response: { status: 200, headersEnabled: false, headers: { 'content-type': 'application/json' }, bodyType: 'json', body: {}, delayMs: 0 },
       metadata: { createdAt: now, updatedAt: now, sortOrder: nextSortOrder(rules, folderId), source: 'manual' },
     }
@@ -70,9 +95,21 @@ export function useWorkspaceData() {
     const now = Date.now()
     const rule: MockRule = {
       id: createId('rule'), name: `${traffic.method} ${new URL(traffic.url).pathname}`, folderId: null, enabled: true, priority: 0,
-      match: { url: traffic.url, urlMode: 'exact', methods: [traffic.method] },
+      match: {
+        url: traffic.url,
+        urlMode: traffic.method === 'GET' ? 'prefix' : 'exact',
+        methods: [traffic.method],
+      },
       requestRewrite: { enabled: false, headers: traffic.requestHeaders ?? {} },
-      response: { status: traffic.status ?? 200, headersEnabled: false, headers: traffic.response?.headers ?? { 'content-type': 'application/json' }, bodyType: traffic.response?.bodyType ?? 'json', body: traffic.response?.body ?? {}, delayMs: 0 },
+      response: {
+        status: traffic.status ?? 200,
+        headersEnabled: false,
+        headers: traffic.response?.headers ?? { 'content-type': 'application/json' },
+        bodyType: traffic.response?.bodyType ?? 'json',
+        body: traffic.response?.body ?? {},
+        ...(traffic.response?.file ? { file: traffic.response.file } : {}),
+        delayMs: 0,
+      },
       metadata: { createdAt: now, updatedAt: now, sortOrder: nextSortOrder(rules, null), source: 'traffic' },
     }
     await sendWorkspaceMessage({ type: 'SAVE_RULE', payload: rule })
@@ -96,7 +133,7 @@ export function useWorkspaceData() {
   }, [refresh])
 
   return {
-    folders, rules, loading, refresh, createFolder, saveFolder, saveRule, saveRuleOrder, createRule, createRuleFromTraffic, deleteRule, deleteFolder,
+    folders, rules, loading, refresh, createFolder, saveFolder, saveRule, saveRuleWithFile, saveRuleOrder, createRule, createRuleFromTraffic, deleteRule, deleteFolder,
     conflicts: useMemo(() => findConflicts(rules), [rules]),
   }
 }

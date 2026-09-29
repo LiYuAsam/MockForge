@@ -1,6 +1,9 @@
 import { createId } from '../shared/ids'
+import { decodeBlob } from '../shared/base64'
+import { fileContentDisposition } from '../shared/file-response'
 import type { MockDecision, PageRequest } from '../shared/messages'
 import { requestDecision } from './bridge'
+import { logMockedRequest } from './mock-console'
 import { captureFetchResponse } from './response-capture'
 
 export function installFetchInterceptor(): void {
@@ -10,6 +13,7 @@ export function installFetchInterceptor(): void {
     const candidate = await toPageRequest(request, 'fetch')
     const decision = await requestDecision(candidate)
     if (decision.matched && decision.response) {
+      logMockedRequest(candidate, decision)
       await delay(decision.response.delayMs)
       return createMockResponse(decision)
     }
@@ -38,10 +42,26 @@ async function toPageRequest(request: Request, source: 'fetch'): Promise<PageReq
 
 export function createMockResponse(decision: MockDecision): Response {
   const response = decision.response!
-  const text = response.bodyType === 'json' ? JSON.stringify(response.body) : response.bodyType === 'text' ? String(response.body ?? '') : null
   const headers = new Headers(response.headersEnabled ? response.headers : {})
-  if (response.bodyType === 'json' && !headers.has('content-type')) headers.set('content-type', 'application/json')
-  return new Response(text, { status: response.status, headers })
+  let body: BodyInit | null = null
+
+  if (response.bodyType === 'file' && response.resolvedFile) {
+    body = decodeBlob(response.resolvedFile.base64, response.resolvedFile.mimeType)
+    if (!headers.has('content-type')) {
+      headers.set('content-type', response.resolvedFile.mimeType)
+    }
+    if (!headers.has('content-disposition')) {
+      headers.set('content-disposition', fileContentDisposition(response.resolvedFile.name))
+    }
+  } else if (response.bodyType === 'json') {
+    body = JSON.stringify(response.body)
+    if (!headers.has('content-type')) headers.set('content-type', 'application/json')
+  } else if (response.bodyType === 'text') {
+    body = String(response.body ?? '')
+  }
+
+  if ([204, 205, 304].includes(response.status)) body = null
+  return new Response(body, { status: response.status, headers })
 }
 
 function withHeaders(request: Request, overrides: Record<string, string>): Request {

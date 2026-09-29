@@ -1,6 +1,13 @@
-import type { MockRule } from './rule'
+import type { BodyType, FileAssetReference } from './rule'
 
-export type TrafficResponse = Pick<MockRule['response'], 'bodyType' | 'body' | 'headers'>
+export type TrafficBodyType = BodyType | 'file'
+
+export type TrafficResponse = {
+  bodyType: TrafficBodyType
+  body: unknown
+  headers: Record<string, string>
+  file?: FileAssetReference
+}
 
 export type TrafficEntry = {
   id: string

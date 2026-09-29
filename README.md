@@ -9,6 +9,7 @@ MockForge is a Manifest V3 Chrome extension for creating local Mock responses fo
 ## Features
 
 - Configure local Mock responses for `fetch` and XHR, including URL matching, HTTP methods, query parameters, request bodies, status codes, headers, response bodies, and delays.
+- Use a selected local file or create a text file in the extension as a response body. Files can be up to 20 MB and are removed after their last rule reference is deleted.
 - Organize rules in folders. A rule takes effect only when it and all of its parent folders are enabled.
 - Monitor recent page traffic and create a Mock rule directly from a captured request.
 - Work from a floating page panel, Chrome Side Panel, or standalone workspace.
@@ -49,7 +50,7 @@ npm run dev
 ## Usage
 
 1. Open the extension workspace. Create a rule in **Mock Rules**, or create one from **Traffic Monitoring**.
-2. Set the request URL, match mode, HTTP method, and response data, then enable the rule.
+2. Set the request URL, match mode, HTTP method, and response data, then enable the rule. Response types include JSON, text, empty, and file.
 3. Reload or interact with the target page. Matching `fetch` and XHR calls receive the local Mock response.
 4. To use the AI assistant, configure a model endpoint, model name, and API key under **Settings**. The model service must support OpenAI-compatible `tools` / Function Calling.
 
@@ -66,6 +67,7 @@ If several rules match, MockForge chooses one based on URL specificity, rule pri
 
 - By default, MockForge handles only `fetch` and `XMLHttpRequest` calls from the page's main world. WebSocket, navigations, and static resources are not intercepted by default.
 - Rules, model configuration, and conversations stay in local browser storage. This project does not provide server-side synchronization.
+- Local response files are selected through the extension and stored in extension storage; pages cannot read arbitrary paths from the user's disk directly.
 - The AI assistant sends the current conversation, explicitly referenced rules or folders, and required tool results to the model service you configure. Please review that provider's data-handling policy.
 
 ## Commands

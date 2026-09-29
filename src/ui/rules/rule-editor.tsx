@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { Folder, MockRule, UrlMode } from '../../core/models'
+import type { Folder, MockBodyType, MockRule, UrlMode } from '../../core/models'
 import type { RuleConflict } from '../../core/rules/conflicts'
+import { FileResponseField } from './file-response-field'
 import { ToggleSwitch } from '../components/toggle-switch'
 
 type RuleEditorProps = {
@@ -8,15 +9,18 @@ type RuleEditorProps = {
   folders: Folder[]
   conflicts: RuleConflict[]
   onSave: (rule: MockRule) => Promise<void>
+  onSaveFile: (rule: MockRule, file: File) => Promise<MockRule>
+  onToggleEnabled: (enabled: boolean) => Promise<void>
 }
 
-export function RuleEditor({ rule, folders, conflicts, onSave }: RuleEditorProps) {
+export function RuleEditor({ rule, folders, conflicts, onSave, onSaveFile, onToggleEnabled }: RuleEditorProps) {
   const [draft, setDraft] = useState(rule)
   const [bodyText, setBodyText] = useState(stringify(rule.response.body))
   const [queryText, setQueryText] = useState(formatQuery(rule.match.query))
   const [requestBodyText, setRequestBodyText] = useState(formatRequestBody(rule.match.requestBodyMatcher))
   const [notice, setNotice] = useState('')
   const savedSignature = useRef(signature(rule))
+  const saveOperation = useRef<Promise<void>>(Promise.resolve())
 
   useEffect(() => {
     setDraft(rule)
@@ -27,14 +31,29 @@ export function RuleEditor({ rule, folders, conflicts, onSave }: RuleEditorProps
     setNotice('')
   }, [rule.id])
 
+  useEffect(() => {
+    setDraft((current) => current.enabled === rule.enabled ? current : { ...current, enabled: rule.enabled })
+  }, [rule.enabled])
+
   const candidate = useMemo(() => parseCandidate(draft, bodyText, queryText, requestBodyText), [draft, bodyText, queryText, requestBodyText])
   useEffect(() => {
-    if (!candidate.ok) { setNotice(candidate.field === 'request' ? '请求 Body JSON 格式无效，修正后将自动保存。' : candidate.field === 'query' ? 'Query 参数 JSON 格式无效，修正后将自动保存。' : 'JSON 响应体格式无效，修正后将自动保存。'); return }
+    if (!candidate.ok) {
+      const notices = {
+        request: '请求 Body JSON 格式无效，修正后将自动保存。',
+        query: 'Query 参数 JSON 格式无效，修正后将自动保存。',
+        response: 'JSON 响应体格式无效，修正后将自动保存。',
+        file: '请选择响应文件，或在插件内创建文本文件。',
+      }
+      setNotice(notices[candidate.field])
+      return
+    }
     const nextSignature = signature(candidate.rule)
     if (nextSignature === savedSignature.current) return
     setNotice('正在自动保存…')
     const timer = window.setTimeout(() => {
-      void onSave(candidate.rule).then(() => {
+      const operation = saveOperation.current.then(() => onSave(candidate.rule))
+      saveOperation.current = operation.then(() => undefined, () => undefined)
+      void operation.then(() => {
         savedSignature.current = nextSignature
         setNotice(conflicts.length ? '已自动保存；该规则仍与其他规则存在重叠。' : '已自动保存')
       }).catch(() => setNotice('自动保存失败，请检查后重试。'))
@@ -42,22 +61,143 @@ export function RuleEditor({ rule, folders, conflicts, onSave }: RuleEditorProps
     return () => window.clearTimeout(timer)
   }, [candidate, conflicts.length, onSave])
 
+  function saveImmediately(ruleToSave: MockRule, successNotice: string, errorNotice: string): void {
+    const previousSignature = signature(draft)
+    savedSignature.current = signature(ruleToSave)
+    setNotice('正在保存…')
+
+    const operation = saveOperation.current.then(() => onSave(ruleToSave))
+    saveOperation.current = operation.then(() => undefined, () => undefined)
+    void operation
+      .then(() => setNotice(successNotice))
+      .catch(() => {
+        savedSignature.current = previousSignature
+        setNotice(errorNotice)
+      })
+  }
+
+  async function attachFile(file: File): Promise<void> {
+    const ruleWithPendingFile: MockRule = {
+      ...draft,
+      response: {
+        ...draft.response,
+        bodyType: 'file',
+        body: null,
+        file: {
+          id: 'pending',
+          name: file.name || 'mock-response.bin',
+          mimeType: file.type || 'application/octet-stream',
+          size: file.size,
+        },
+      },
+    }
+    const parsed = parseCandidate(ruleWithPendingFile, bodyText, queryText, requestBodyText)
+    if (!parsed.ok) throw new Error('请先修复其他格式错误，再关联响应文件。')
+
+    await saveOperation.current
+    const operation = saveOperation.current.then(() => onSaveFile(parsed.rule, file))
+    saveOperation.current = operation.then(() => undefined, () => undefined)
+    const savedRule = await operation
+    setDraft(savedRule)
+    setBodyText('')
+    savedSignature.current = signature(savedRule)
+    setNotice('响应文件已保存并关联。')
+  }
+
+  function detachFile(): void {
+    const detachedRule: MockRule = {
+      ...draft,
+      response: { ...draft.response, bodyType: 'text', body: '', file: undefined },
+    }
+    const candidate = parseCandidate(detachedRule, '', queryText, requestBodyText)
+    const ruleToSave = candidate.ok ? candidate.rule : detachedRule
+
+    setDraft(detachedRule)
+    setBodyText('')
+    saveImmediately(ruleToSave, '响应文件已移除。', '移除响应文件失败，请检查后重试。')
+  }
+
   return <section className="panel">
-    <div className="row row--space"><div><h2 className="panel__title">修改接口</h2><span className="muted">{notice || '编辑内容将自动保存'}</span></div><ToggleSwitch checked={draft.enabled} label="启用" onChange={(enabled) => setDraft({ ...draft, enabled })} /></div>
+    <div className="row row--space">
+      <div>
+        <h2 className="panel__title">修改接口</h2>
+        <span className="muted">{notice || '编辑内容将自动保存'}</span>
+      </div>
+      <ToggleSwitch
+        checked={draft.enabled}
+        label="启用"
+        onChange={(enabled) => {
+          setDraft({ ...draft, enabled })
+          void onToggleEnabled(enabled)
+        }}
+      />
+    </div>
     {conflicts.length > 0 && <div className="list-item list-item--warn" style={{ marginBottom: 12 }}>此规则有 {conflicts.length} 条{conflicts.some((item) => item.level === 'duplicate') ? '明确重复' : '可能冲突'}规则。最终命中会按 URL 精确度、优先级和更新时间选择。</div>}
     <div className="form-grid">
       <Field label="规则名称"><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></Field>
       <Field label="文件夹"><select value={draft.folderId ?? ''} onChange={(event) => setDraft({ ...draft, folderId: event.target.value || null })}><option value="">root</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select></Field>
       <Field label="请求方法"><select value={draft.match.methods[0]} onChange={(event) => { const method = event.target.value; setDraft({ ...draft, match: { ...draft.match, methods: [method], ...(canCarryBody(method) ? {} : { requestBodyMatcher: undefined }) } }) }}>{['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => <option key={method}>{method}</option>)}</select></Field>
-      <Field label="URL 模式"><select value={draft.match.urlMode} onChange={(event) => setDraft({ ...draft, match: { ...draft.match, urlMode: event.target.value as UrlMode } })}>{['exact', 'prefix', 'wildcard', 'regex'].map((mode) => <option key={mode}>{mode}</option>)}</select></Field>
+      <Field
+        label="URL 模式"
+        hint={draft.match.methods.includes('GET')
+          ? 'GET 请求默认使用 prefix：按填写的 URL 前缀匹配。URL 不含 Query 参数时，可匹配参数不同的请求；需要完整 URL 一致时可选择 exact。'
+          : undefined}
+      >
+        <select
+          value={draft.match.urlMode}
+          onChange={(event) => setDraft({
+            ...draft,
+            match: { ...draft.match, urlMode: event.target.value as UrlMode },
+          })}
+        >
+          {['exact', 'prefix', 'wildcard', 'regex'].map((mode) => (
+            <option key={mode}>{mode}</option>
+          ))}
+        </select>
+      </Field>
       <Field label="请求 URL" full><input placeholder="https://api.example.com/users" value={draft.match.url} onChange={(event) => setDraft({ ...draft, match: { ...draft.match, url: event.target.value } })} /></Field>
       <QueryField value={queryText} invalid={!candidate.ok && candidate.field === 'query'} onChange={setQueryText} />
       {canCarryBody(draft.match.methods[0]) && <RequestBodyField value={requestBodyText} invalid={!candidate.ok && candidate.field === 'request'} onChange={setRequestBodyText} />}
       <Field label="响应状态码"><input type="number" value={draft.response.status} onChange={(event) => setDraft({ ...draft, response: { ...draft.response, status: Number(event.target.value) } })} /></Field>
       <Field label="延迟（ms）"><input type="number" min="0" value={draft.response.delayMs} onChange={(event) => setDraft({ ...draft, response: { ...draft.response, delayMs: Number(event.target.value) } })} /></Field>
-      <Field label="响应类型"><select value={draft.response.bodyType} onChange={(event) => setDraft({ ...draft, response: { ...draft.response, bodyType: event.target.value as MockRule['response']['bodyType'] } })}><option value="json">JSON</option><option value="text">文本</option><option value="empty">空响应</option></select></Field>
+      <Field label="响应类型">
+        <select
+          value={draft.response.bodyType}
+          onChange={(event) => {
+            const bodyType = event.target.value as MockBodyType
+            const nextBodyText = draft.response.bodyType === 'file' && bodyType === 'json'
+              ? '{}'
+              : bodyType === 'text' && draft.response.bodyType === 'file'
+                ? ''
+                : bodyText
+            const nextRule = {
+              ...draft,
+              response: {
+                ...draft.response,
+                bodyType,
+                ...(draft.response.bodyType === 'file' && bodyType === 'json' ? { body: {} } : {}),
+                ...(bodyType === 'file' ? {} : { file: undefined }),
+              },
+            }
+            setDraft(nextRule)
+            if (nextBodyText !== bodyText) setBodyText(nextBodyText)
+            if (draft.response.bodyType === 'file' && bodyType !== 'file') {
+              const candidate = parseCandidate(nextRule, nextBodyText, queryText, requestBodyText)
+              const ruleToSave = candidate.ok ? candidate.rule : nextRule
+              saveImmediately(ruleToSave, '响应文件已移除。', '移除响应文件失败，请检查后重试。')
+            }
+          }}
+        >
+          <option value="json">JSON</option>
+          <option value="text">文本</option>
+          <option value="empty">空响应</option>
+          <option value="file">文件</option>
+        </select>
+      </Field>
       <Field label="优先级"><input type="number" value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: Number(event.target.value) })} /></Field>
-      <Field label="响应体" full><textarea rows={8} value={bodyText} onChange={(event) => setBodyText(event.target.value)} placeholder="JSON 响应内容" /></Field>
+      {draft.response.bodyType === 'file'
+        ? <FileResponseField file={draft.response.file} onAttach={attachFile} onRemove={detachFile} />
+        : <Field label="响应体" full><textarea rows={8} value={bodyText} onChange={(event) => setBodyText(event.target.value)} placeholder="JSON 响应内容" /></Field>}
       <HeaderField label="Request Header" enabled={Boolean(draft.requestRewrite?.enabled)} onEnabledChange={(enabled) => setDraft({ ...draft, requestRewrite: { enabled, headers: draft.requestRewrite?.headers ?? {} } })} value={formatHeaders(draft.requestRewrite?.headers ?? {})} onChange={(value) => setDraft({ ...draft, requestRewrite: { enabled: draft.requestRewrite?.enabled ?? false, headers: parseHeaders(value) } })} hint="未启用时保留页面原始请求 Header。" />
       <HeaderField label="Response Header" enabled={Boolean(draft.response.headersEnabled)} onEnabledChange={(enabled) => setDraft({ ...draft, response: { ...draft.response, headersEnabled: enabled } })} value={formatHeaders(draft.response.headers)} onChange={(value) => setDraft({ ...draft, response: { ...draft.response, headers: parseHeaders(value) } })} hint="未启用时仅自动补充 Content-Type。" />
     </div>
@@ -76,7 +216,29 @@ function RequestBodyField({ value, invalid, onChange }: { value: string; invalid
   return <label className="field form-grid--full"><span>请求 Body（JSON）</span><textarea className={invalid ? 'field__input--invalid' : undefined} value={value} onChange={(event) => onChange(event.target.value)} placeholder={'例如：\n{\n  "grant_type": "client_credentials"\n}'} /><span className={invalid ? 'field__error' : 'muted'}>{invalid ? 'JSON 格式校验失败，请修正后再保存。' : '仅当请求 Body 中包含此 JSON 结构时才命中；留空则不限制请求 Body。'}</span></label>
 }
 
-function Field({ label, full, children }: { label: string; full?: boolean; children: ReactNode }) { return <label className={full ? 'field form-grid--full' : 'field'}><span>{label}</span>{children}</label> }
+function Field({ label, full, hint, children }: { label: string; full?: boolean; hint?: string; children: ReactNode }) {
+  return (
+    <label className={full ? 'field form-grid--full' : 'field'}>
+      <span className="field__label">
+        {label}
+        {hint && <InfoHint label={hint} />}
+      </span>
+      {children}
+    </label>
+  )
+}
+
+function InfoHint({ label }: { label: string }) {
+  return (
+    <span className="field__info" title={label} aria-label={label} role="img">
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.5" />
+        <line x1="8" y1="7" x2="8" y2="11" />
+        <circle cx="8" cy="4.5" r="0.5" />
+      </svg>
+    </span>
+  )
+}
 function stringify(value: unknown): string { return typeof value === 'string' ? value : JSON.stringify(value, null, 2) }
 function formatHeaders(headers: Record<string, string>): string { return Object.entries(headers).map(([key, value]) => `${key}: ${value}`).join('\n') }
 function parseHeaders(value: string): Record<string, string> { return Object.fromEntries(value.split('\n').map((line) => line.split(/:(.*)/)).filter(([key, item]) => key.trim() && item !== undefined).map(([key, item]) => [key.trim(), item.trim()])) }
@@ -84,9 +246,14 @@ function signature(rule: MockRule): string { const { metadata: _metadata, ...con
 function formatQuery(value: Record<string, string> | undefined): string { return value && Object.keys(value).length ? JSON.stringify(value, null, 2) : '' }
 function formatRequestBody(value: string | undefined): string { if (!value) return ''; try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value } }
 function canCarryBody(method: string): boolean { return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) }
-function parseCandidate(draft: MockRule, bodyText: string, queryText: string, requestBodyText: string): { ok: true; rule: MockRule } | { ok: false; field: 'response' | 'query' | 'request' } {
+function parseCandidate(draft: MockRule, bodyText: string, queryText: string, requestBodyText: string): { ok: true; rule: MockRule } | { ok: false; field: 'response' | 'query' | 'request' | 'file' } {
   let responseBody: unknown
-  try { responseBody = draft.response.bodyType === 'json' ? JSON.parse(bodyText) : bodyText } catch { return { ok: false, field: 'response' } }
+  if (draft.response.bodyType === 'file') {
+    if (!draft.response.file) return { ok: false, field: 'file' }
+    responseBody = null
+  } else {
+    try { responseBody = draft.response.bodyType === 'json' ? JSON.parse(bodyText) : bodyText } catch { return { ok: false, field: 'response' } }
+  }
   let query: Record<string, string> | undefined
   try { query = parseQuery(queryText) } catch { return { ok: false, field: 'query' } }
   let requestBodyMatcher = draft.match.requestBodyMatcher

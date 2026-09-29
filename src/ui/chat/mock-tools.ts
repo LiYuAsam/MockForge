@@ -36,6 +36,18 @@ const matchParameters: Record<string, unknown> = {
     query: headersParameters, requestHeaders: headersParameters, requestBodyMatcher: { type: 'string', maxLength: 10000 },
   },
 }
+const createMatchParameters: Record<string, unknown> = {
+  ...matchParameters,
+  required: ['url', 'methods'],
+  properties: {
+    ...(matchParameters.properties as Record<string, unknown>),
+    urlMode: {
+      type: 'string',
+      enum: urlModes,
+      description: '可省略；省略时 GET 默认 prefix，其他方法默认 exact。',
+    },
+  },
+}
 const responseParameters: Record<string, unknown> = {
   type: 'object', additionalProperties: false, required: ['status', 'headersEnabled', 'headers', 'bodyType', 'body', 'delayMs'], properties: {
     status: { type: 'integer', minimum: 100, maximum: 599 }, headersEnabled: { type: 'boolean' }, headers: headersParameters,
@@ -46,7 +58,7 @@ const requestRewriteParameters: Record<string, unknown> = { type: 'object', addi
 const ruleParameters: Record<string, unknown> = {
   type: 'object', additionalProperties: false, required: ['name', 'match', 'response'], properties: {
     name: { type: 'string', minLength: 1, maxLength: 200 }, folderId: { type: ['string', 'null'] }, enabled: { type: 'boolean' }, priority: { type: 'integer', minimum: -10000, maximum: 10000 },
-    match: matchParameters, requestRewrite: requestRewriteParameters, response: responseParameters,
+    match: createMatchParameters, requestRewrite: requestRewriteParameters, response: responseParameters,
   },
 }
 const updatePatchParameters: Record<string, unknown> = {
@@ -59,12 +71,13 @@ const updatePatchParameters: Record<string, unknown> = {
 const headersSchema = z.record(z.string().min(1).max(200), z.string().max(4000)).default({})
 const matchSchema = z.object({
   url: z.string().trim().min(1).max(4096),
-  urlMode: z.enum(urlModes).default('exact'),
+  urlMode: z.enum(urlModes).optional(),
   methods: z.array(z.enum(httpMethods)).min(1).max(httpMethods.length),
   query: headersSchema.optional(),
   requestHeaders: headersSchema.optional(),
   requestBodyMatcher: z.string().max(10000).optional(),
 }).strict()
+const updateMatchSchema = matchSchema.extend({ urlMode: z.enum(urlModes) })
 const responseSchema = z.object({
   status: z.number().int().min(100).max(599).default(200),
   headersEnabled: z.boolean().default(false),
@@ -99,7 +112,7 @@ const updateSchema = z.object({
     folderId: z.string().min(1).nullable().optional(),
     enabled: z.boolean().optional(),
     priority: z.number().int().min(-10000).max(10000).optional(),
-    match: matchSchema.optional(),
+    match: updateMatchSchema.optional(),
     requestRewrite: requestRewriteSchema.optional(),
     response: responseSchema.optional(),
   }).strict().refine((patch) => Object.keys(patch).length > 0, 'patch 至少包含一个字段'),
@@ -128,7 +141,7 @@ export const mockTools: ModelTool[] = [
   tool('get_mock_rule', '读取一条已有 Mock 规则的完整可编辑信息。', {
     type: 'object', additionalProperties: false, required: ['ruleId'], properties: { ruleId: { type: 'string' } },
   }),
-  tool('create_mock_rule', '生成一条新的、待用户确认的完整 Mock 规则。不得声称已保存或已生效。', {
+  tool('create_mock_rule', '生成一条新的、待用户确认的完整 Mock 规则。省略 URL 模式时，GET 默认 prefix，其他方法默认 exact。不得声称已保存或已生效。', {
     type: 'object', additionalProperties: false, required: ['reason', 'rule'], properties: {
       reason: { type: 'string', minLength: 1, maxLength: 500 }, rule: ruleParameters,
     },
@@ -209,7 +222,12 @@ function getTrafficApiDetail(value: unknown, context: MockToolContext): ToolExec
       id: entry.id, method: entry.method, url: entry.url, query: getQuery(entry.url), source: entry.source, decision: entry.decision,
       startedAt: entry.startedAt, durationMs: entry.durationMs ?? null, status: entry.status ?? null, matchedRuleId: entry.matchedRuleId ?? null,
       requestHeaders: entry.requestHeaders ?? {}, requestBody: modelValue(entry.requestBody),
-      response: entry.response ? { bodyType: entry.response.bodyType, headers: entry.response.headers, body: modelValue(entry.response.body) } : null,
+      response: entry.response ? {
+        bodyType: entry.response.bodyType,
+        headers: entry.response.headers,
+        body: modelValue(entry.response.body),
+        file: entry.response.file ?? null,
+      } : null,
     },
   } }
 }
@@ -247,10 +265,15 @@ function createRule(value: unknown, callId: string, context: MockToolContext): T
   const input = createSchema.parse(value)
   if (input.rule.folderId && !context.folders.some((folder) => folder.id === input.rule.folderId)) throw new Error('folderId 不存在，请使用 null 或先检索文件夹。')
   const now = Date.now()
+  const methods = [...new Set(input.rule.match.methods)]
   const rule: MockRule = {
     id: createId('rule'),
     ...input.rule,
-    match: { ...input.rule.match, methods: [...new Set(input.rule.match.methods)] },
+    match: {
+      ...input.rule.match,
+      urlMode: input.rule.match.urlMode ?? (methods.includes('GET') ? 'prefix' : 'exact'),
+      methods,
+    },
     response: normalizeResponse(input.rule.response),
     metadata: { createdAt: now, updatedAt: now, source: 'ai' },
   }
